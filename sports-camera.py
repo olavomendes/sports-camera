@@ -7,12 +7,15 @@ import os
 import imageio
 from datetime import datetime
 
-CAMERA_INDEX = 0
+# Camera: pode ser um índice (int) para câmera local ou URL para câmera IP
+# Exemplos: 0 (câmera padrão), "rtsp://192.168.1.10:554/stream" (câmera IP)
+CAMERA_SOURCE = 0
 BUFFER_SECONDS = 30
 FPS = 30
 SERIAL_PORT = "COM3" 
 RESOLUTION = (1280, 720)
 OUTPUT_FOLDER = "records"
+CAMERA_TIMEOUT = 10  # segundos para timeout ao conectar em câmera IP
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
@@ -21,22 +24,44 @@ recording = False
 
 
 def capture():
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, RESOLUTION[0])
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, RESOLUTION[1])
-    cap.set(cv2.CAP_PROP_FPS, FPS)
+    is_ip_camera = isinstance(CAMERA_SOURCE, str)
+    retry_count = 0
+    max_retries = 5 if is_ip_camera else 1
+    
+    while retry_count < max_retries:
+        cap = cv2.VideoCapture(CAMERA_SOURCE)
+        
+        # Aumentar timeout para câmeras IP
+        if is_ip_camera:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, RESOLUTION[0])
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, RESOLUTION[1])
+        cap.set(cv2.CAP_PROP_FPS, FPS)
 
-    if not cap.isOpened():
-        print(f"[ERROR] Camera {CAMERA_INDEX} not found. Try another index.")
-        return
+        if not cap.isOpened():
+            retry_count += 1
+            if is_ip_camera:
+                print(f"[WARN] IP Camera connection failed (attempt {retry_count}/{max_retries}). Retrying in 5s...")
+                time.sleep(5)
+            else:
+                print(f"[ERROR] Camera {CAMERA_SOURCE} not found. Try another index.")
+                return
+            continue
 
-    print("Camera started. Buffer active.")
+        print("Camera started. Buffer active.")
+        retry_count = 0
 
-    while True:
-        ok, frame = cap.read()
-        if ok:
-            buffer.append(frame.copy())
-        time.sleep(1 / FPS)
+        while True:
+            ok, frame = cap.read()
+            if ok:
+                buffer.append(frame.copy())
+            else:
+                if is_ip_camera:
+                    print("[WARN] Lost connection to IP camera. Attempting reconnection...")
+                    cap.release()
+                    break
+            time.sleep(1 / FPS)
 
 
 def save_buffer():
